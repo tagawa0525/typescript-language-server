@@ -34,6 +34,7 @@ import { CachedResponse } from './tsServer/cachedResponse.js';
 import { LogDirectoryProvider } from './tsServer/logDirectoryProvider.js';
 import { Trace } from './tsServer/tracer.js';
 import { type TypeScriptVersion, TypeScriptVersionProvider, type UnusableTypeScriptInstallation } from './tsServer/versionProvider.js';
+import { version } from './version.js';
 import API from './utils/api.js';
 import { toSyntaxServerConfiguration, TsServerLogLevel, type LspServerConfiguration } from './utils/configuration.js';
 import { onCaseInsensitiveFileSystem } from './utils/fs.js';
@@ -256,6 +257,10 @@ export class LspServer {
         const prepareSupport = textDocument?.rename?.prepareSupport && this.tsClient.apiVersion.gte(API.v310);
         const { codeActionLiteralSupport, resolveSupport: codeActionResolveSupport } = textDocument?.codeAction || {};
         const initializeResult: lsp.InitializeResult = {
+            serverInfo: {
+                name: 'typescript-language-server',
+                version,
+            },
             capabilities: {
                 textDocumentSync: lsp.TextDocumentSyncKind.Incremental,
                 completionProvider: {

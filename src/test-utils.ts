@@ -215,6 +215,7 @@ export class TestLspClient implements LspClient {
 
 export class TestLspServer extends LspServer {
     workspaceEdits: lsp.ApplyWorkspaceEditParams[] = [];
+    initializeResult?: lsp.InitializeResult;
 
     updateWorkspaceSettings(settings: WorkspaceConfiguration): void {
         const configuration: lsp.DidChangeConfigurationParams = {
@@ -244,7 +245,7 @@ export async function createServer(options: TestLspServerOptions): Promise<TestL
         server.workspaceEdits.push(args);
     });
 
-    server.initialize({
+    server.initializeResult = server.initialize({
         rootPath: undefined,
         rootUri: options.rootUri,
         processId: 42,

@@ -39,6 +39,13 @@ afterAll(() => {
     server.shutdown();
 });
 
+describe('initialize', () => {
+    it('reports serverInfo with the package name and version', () => {
+        const { name, version } = fs.readJsonSync(new URL('../package.json', import.meta.url)) as { name: string; version: string; };
+        expect(server.initializeResult?.serverInfo).toEqual({ name, version });
+    });
+});
+
 describe('completion', () => {
     it('simple test', async () => {
         const doc = {
