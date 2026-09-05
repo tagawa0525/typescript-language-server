@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { LSPErrorCodes, type ResponseError } from 'vscode-languageserver';
 import { TsClient } from './ts-client.js';
 import { ConsoleLogger } from './utils/logger.js';
 import { filePath, readContents, TestLspClient, uri } from './test-utils.js';
@@ -134,4 +135,58 @@ describe('ts server client', () => {
         expect(response.body!.some(({ file }) => file.endsWith('module2.ts'))).toBeTruthy();
         expect(response.body!.some(({ file: file_1 }) => file_1.endsWith('module1.ts'))).toBeFalsy();
     });
+});
+
+describe('ts server client without a running tsserver', () => {
+    function startClient(onExit?: () => void): TsClient {
+        const client = new TsClient(onCaseInsensitiveFileSystem(), logger, lspClient);
+        client.start(
+            undefined,
+            {
+                logDirectoryProvider: noopLogDirectoryProvider,
+                logVerbosity: TsServerLogLevel.Off,
+                onExit,
+                plugins: [],
+                trace: Trace.Off,
+                typescriptVersion: bundled!,
+                useClientFileWatcher: false,
+                useSyntaxServer: SyntaxServerConfiguration.Never,
+            },
+        );
+        return client;
+    }
+
+    it('fails requests with RequestFailed after tsserver exited', async () => {
+        let onExit: () => void = () => {};
+        const exited = new Promise<void>(resolve => {
+            onExit = resolve;
+        });
+        const client = startClient(() => onExit());
+        // Bring down the tsserver process from underneath the client, as a crash would
+        // (`ITypeScriptServer.kill()` is not used: it disposes the exit handlers first).
+        (client as unknown as { serverState: { server: { _process: { kill(): void; }; }; }; }).serverState.server._process.kill();
+        await exited;
+
+        const error = await requestError(client);
+        expect(error.code).toBe(LSPErrorCodes.RequestFailed);
+        expect(error.message).toContain('tsserver exited');
+    });
+
+    it('fails requests with RequestFailed after shutdown', async () => {
+        const client = startClient();
+        client.shutdown();
+        const error = await requestError(client);
+        expect(error.code).toBe(LSPErrorCodes.RequestFailed);
+        expect(error.message).toContain('tsserver');
+    });
+
+    async function requestError(client: TsClient): Promise<ResponseError<void>> {
+        const f = filePath('module2.ts');
+        return client.execute(CommandTypes.References, { file: f, line: 8, offset: 16 }).then(
+            () => {
+                throw new Error('the request was answered although there is no tsserver');
+            },
+            (error: unknown) => error as ResponseError<void>,
+        );
+    }
 });

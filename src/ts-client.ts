@@ -11,7 +11,7 @@
 
 import path from 'node:path';
 import { URI } from 'vscode-uri';
-import { ResponseError } from 'vscode-languageserver';
+import { LSPErrorCodes, ResponseError } from 'vscode-languageserver';
 import type lsp from 'vscode-languageserver';
 import type { DocumentUri } from 'vscode-languageserver-textdocument';
 import { type CancellationToken, CancellationTokenSource } from 'vscode-jsonrpc';
@@ -174,6 +174,8 @@ export class TsClient implements ITypeScriptServiceClient {
     private useSyntaxServer: SyntaxServerConfiguration = SyntaxServerConfiguration.Auto;
     private onEvent?: (event: ts.server.protocol.Event) => void;
     private onExit?: (exitCode: number | null, signal: NodeJS.Signals | null) => void;
+    /** Why the last tsserver is gone. Reported in the error of requests that can no longer be served. */
+    private tsserverExitReason: string | undefined;
 
     constructor(
         onCaseInsensitiveFileSystem: boolean,
@@ -375,8 +377,10 @@ export class TsClient implements ITypeScriptServiceClient {
             onFatalError: (command, err) => this.fatalError(command, err),
         });
         this.serverState = new ServerState.Running(tsServer, this.apiVersion, undefined, true);
+        this.tsserverExitReason = undefined;
         tsServer.onExit((data: TypeScriptServerExitEvent) => {
             this.serverState = ServerState.None;
+            this.tsserverExitReason = `tsserver exited (code: ${data.code}, signal: ${data.signal})`;
             this.shutdown();
             this.tsserverLogger.error(`Exited. Code: ${data.code}. Signal: ${data.signal}`);
             this.onExit?.(data.code, data.signal);
@@ -472,6 +476,10 @@ export class TsClient implements ITypeScriptServiceClient {
         token?: CancellationToken,
         config?: ExecConfig,
     ): Promise<ServerResponse.Response<StandardTsServerRequests[K][1]>> {
+        if (this.serverState.type !== ServerState.Type.Running) {
+            return Promise.reject(this.requestFailedWithoutServer(command));
+        }
+
         let executions: Array<Promise<ServerResponse.Response<ts.server.protocol.Response>> | undefined> | undefined;
 
         if (config?.cancelOnResourceChange) {
@@ -558,6 +566,10 @@ export class TsClient implements ITypeScriptServiceClient {
         args: TypeScriptRequestTypes[K][0],
         executeInfo?: Partial<ExecuteInfo>,
     ): Promise<ServerResponse.Response<ts.server.protocol.Response>> {
+        if (this.serverState.type !== ServerState.Type.Running) {
+            return Promise.reject(this.requestFailedWithoutServer(command));
+        }
+
         const updatedExecuteInfo: ExecuteInfo = {
             expectsResult: true,
             isAsync: false,
@@ -595,6 +607,18 @@ export class TsClient implements ITypeScriptServiceClient {
     // public get configuration(): TypeScriptServiceConfiguration {
     //     return this._configuration;
     // }
+
+    /**
+     * The error for a request that expects a result while there is no tsserver to answer it.
+     * Returning an empty result instead would present a dead server as a successful answer
+     * (for example "no references"), which the client cannot tell from a real one.
+     */
+    private requestFailedWithoutServer(command: string): ResponseError<void> {
+        const reason = this.serverState.type === ServerState.Type.Errored
+            ? `tsserver failed: ${this.serverState.error.message}`
+            : this.tsserverExitReason ?? 'tsserver is not running';
+        return new ResponseError(LSPErrorCodes.RequestFailed, `${reason}; cannot execute ${command}`);
+    }
 
     private executeImpl(command: keyof TypeScriptRequestTypes, args: any, executeInfo: ExecuteInfo): Array<Promise<ServerResponse.Response<ts.server.protocol.Response>> | undefined> {
         const serverState = this.serverState;
